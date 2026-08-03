@@ -1,0 +1,135 @@
+/* armojidots-hypr · Waybar
+   Ported directly from armojidots' style.css (SwayFX) — same nested-pill
+   structure: waybar's own .modules-left/-center/-right wrapper classes get
+   the outer glass pill, individual modules get a smaller nested pill.
+   Dark mode only. */
+
+@import "colors.css";
+
+* {
+  font-family: "JetBrainsMono Nerd Font", monospace;
+  font-size: 13px;
+  min-height: 0;
+}
+
+window#waybar {
+  background: transparent;
+  color: @fg;
+}
+
+/* ── The three pills ── */
+.modules-left,
+.modules-center,
+.modules-right {
+  background: @bg;
+  border-radius: 999px;
+  padding: 0 4px;
+  margin-top: 3px;
+  margin-bottom: 3px;
+  min-height: 28px;
+}
+
+/* ── Workspaces (center pill) ── */
+#workspaces button {
+  padding: 0 7px;
+  margin: 3px 2px;
+  border-radius: 999px;
+  color: @muted;
+  background: transparent;
+}
+#workspaces button.active {
+  color: #ffffff;
+  background: alpha(@accent, 0.35);
+}
+#workspaces button.urgent {
+  color: #e06c75;
+}
+#workspaces button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Modules: each gets its own inner pill ── */
+#clock,
+#tray,
+#bluetooth,
+#network,
+#pulseaudio,
+#idle_inhibitor,
+#custom-bluelight,
+#custom-notifications {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  padding: 0 9px;
+  margin: 3px 2px;
+}
+
+#custom-bluelight.on {
+  color: #e5a05c;
+}
+#custom-bluelight.auto {
+  color: @accent;
+}
+
+#custom-notifications.notification,
+#custom-notifications.inhibited-notification {
+  color: @accent;
+}
+#custom-notifications.dnd-none,
+#custom-notifications.dnd-notification,
+#custom-notifications.dnd-inhibited-none,
+#custom-notifications.dnd-inhibited-notification {
+  color: @muted;
+}
+
+#idle_inhibitor.activated {
+  color: @accent;
+}
+
+/* ── Media pill (group) ── */
+#media {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  padding: 0 4px;
+  margin: 3px 2px;
+}
+#custom-cover-fetch {
+  padding: 0;
+  min-width: 0;
+}
+image#cover,
+#cover {
+  border-radius: 999px;
+  margin: 0 6px 0 0;
+}
+#custom-cava {
+  color: @accent;
+  padding: 0 6px 0 10px;
+}
+#custom-media-prev,
+#custom-media-playpause {
+  padding: 0 4px;
+}
+#custom-media-next {
+  padding: 0 9px 0 4px;
+}
+#custom-media-playpause {
+  color: @accent;
+}
+#custom-media-prev:hover,
+#custom-media-playpause:hover,
+#custom-media-next:hover {
+  color: #ffffff;
+}
+#custom-media-info {
+  padding: 0 4px 0 8px;
+  font-size: 11px;
+  color: @fg;
+}
+
+/* accent touches */
+#clock {
+  color: @accent;
+}
+#network.wifi {
+  color: @accent;
+}

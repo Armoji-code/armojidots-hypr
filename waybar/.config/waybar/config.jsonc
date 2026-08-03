@@ -1,0 +1,145 @@
+// ── armojidots-hypr · Waybar ────────────────────────
+// Top bar: media pill | clock  ·  workspaces  ·  system status
+{
+  "layer": "top",
+  "position": "top",
+  "height": 34,
+  "spacing": 6,
+
+  "margin-top": 8,
+  "margin-left": 12,
+  "margin-right": 12,
+
+  "modules-left": ["clock", "group/media"],
+
+  "group/media": {
+    "orientation": "horizontal",
+    "modules": ["custom/cover-fetch", "custom/cava", "custom/media-prev", "custom/media-playpause", "custom/media-next", "image#cover", "custom/media-info"]
+  },
+
+  "custom/cover-fetch": {
+    "exec": "~/.config/waybar/scripts/media.sh cover",
+    "interval": "once",
+    "tooltip": false
+  },
+
+  "image#cover": {
+    "path": "/home/armoji/.cache/armojidots-waybar/cover.png",
+    "size": 22,
+    "interval": 2,
+    "on-click": "~/.config/waybar/scripts/media.sh cycle"
+  },
+
+  "custom/cava": {
+    "exec": "~/.config/waybar/scripts/media.sh cava",
+    "tooltip": false
+  },
+
+  "custom/media-prev": {
+    "format": "󰒮",
+    "on-click": "~/.config/waybar/scripts/media.sh prev",
+    "tooltip": false
+  },
+
+  "custom/media-playpause": {
+    "exec": "~/.config/waybar/scripts/media.sh playpause",
+    "return-type": "json",
+    "on-click": "~/.config/waybar/scripts/media.sh play-pause",
+    "tooltip": false
+  },
+
+  "custom/media-next": {
+    "format": "󰒭",
+    "on-click": "~/.config/waybar/scripts/media.sh next",
+    "tooltip": false
+  },
+
+  "custom/media-info": {
+    "exec": "~/.config/waybar/scripts/media.sh info",
+    "return-type": "json",
+    "escape": false,
+    "on-click": "~/.config/waybar/scripts/media.sh play-pause"
+  },
+
+  "modules-center": ["hyprland/workspaces"],
+  "modules-right": ["tray", "bluetooth", "network", "pulseaudio", "idle_inhibitor", "custom/bluelight", "custom/notifications"],
+
+  "hyprland/workspaces": {
+    "format": "{icon}",
+    "format-icons": {
+      "1": "1", "2": "2", "3": "3", "4": "4", "5": "5",
+      "6": "6", "7": "7", "8": "8", "9": "9", "10": "10"
+    }
+  },
+
+  "clock": {
+    "format": "{:%H:%M  %Y-%m-%d}",
+    "format-alt": "{:%H:%M  %Y-%B-%d}",
+    "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
+  },
+
+  "tray": {
+    "spacing": 8
+  },
+
+  "bluetooth": {
+    "format": "󰂯",
+    "format-disabled": "󰂲",
+    "format-connected": "󰂱 {num_connections}",
+    "on-click": "kitty --app-id=float-tui -e bluetuith",
+    "tooltip-format": "{controller_alias}\t{controller_address}",
+    "tooltip-format-connected": "{device_enumerate}"
+  },
+
+  "network": {
+    "format-wifi": "󰤨 {essid}",
+    "format-ethernet": "󰈀",
+    "format-disconnected": "󰤭 offline",
+    "on-click": "kitty --app-id=float-tui -e nmtui",
+    "tooltip-format-wifi": "{essid} ({signalStrength}%)\n{ipaddr}",
+    "tooltip-format-ethernet": "{ifname}\n{ipaddr}"
+  },
+
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-muted": "󰝟 mute",
+    "format-icons": { "default": ["󰕿", "󰖀", "󰕾"] },
+    "on-click": "kitty --app-id=float-tui -e pulsemixer",
+    "tooltip": false
+  },
+
+  "idle_inhibitor": {
+    "format": "{icon}",
+    "format-icons": { "activated": "󰅶", "deactivated": "󰒲" },
+    "start-activated": true,
+    "tooltip-format-activated": "auto-lock: OFF (click to arm)",
+    "tooltip-format-deactivated": "auto-lock: ON"
+  },
+
+  "custom/bluelight": {
+    "exec": "~/.config/waybar/scripts/bluelight.sh status",
+    "return-type": "json",
+    "interval": "once",
+    "signal": 9,
+    "on-click": "~/.config/waybar/scripts/bluelight.sh toggle"
+  },
+
+  "custom/notifications": {
+    "format": "{icon}",
+    "format-icons": {
+      "notification": "󱅫",
+      "none": "󰂚",
+      "dnd-notification": "󰂛",
+      "dnd-none": "󰂛",
+      "inhibited-notification": "󱅫",
+      "inhibited-none": "󰂚",
+      "dnd-inhibited-notification": "󰂛",
+      "dnd-inhibited-none": "󰂛"
+    },
+    "return-type": "json",
+    "exec": "swaync-client -swb",
+    "on-click": "swaync-client -t -sw",
+    "escape": true,
+    "tooltip": false
+  }
+}
