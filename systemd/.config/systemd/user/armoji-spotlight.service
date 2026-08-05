@@ -1,0 +1,18 @@
+[Unit]
+Description=Armoji Spotlight launcher (resident)
+# Stays resident with its window hidden so the keybind opens it instantly
+# instead of cold-starting the GTK app. Needs elephant for search/app data.
+After=graphical-session.target elephant.service
+Wants=elephant.service
+
+[Service]
+Type=simple
+# gtk4-layer-shell must be loaded before libwayland-client; with the Python
+# binding the only reliable way is LD_PRELOAD (else the search bar silently
+# falls back to a normal window and can't be a true capsule).
+Environment=LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so
+ExecStart=%h/.local/bin/armoji-spotlight --daemon
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,36 @@
+# ── armojidots · Walker (Spotlight) ─────────────────
+# Tap Win to toggle. Type to search apps (sorted by usage).
+# Hidden commands: /set  /power  /web <query>  /bash <cmd>  math (or =math)
+
+force_keyboard_focus = true   # don't vanish when the mouse wanders
+close_when_open = true        # tap Win again = close (toggle)
+theme = "armoji"
+
+[providers]
+# what plain typing searches: apps + live math — commands stay hidden
+default = ["desktopapplications", "calc"]
+empty = ["desktopapplications"]
+
+[providers.argument_delimiter]
+runner = " "
+
+# ── command prefixes ──
+[[providers.prefixes]]
+prefix = "/set"
+provider = "menus:set"
+
+[[providers.prefixes]]
+prefix = "/power"
+provider = "menus:power"
+
+[[providers.prefixes]]
+prefix = "/web"
+provider = "websearch"
+
+[[providers.prefixes]]
+prefix = "/bash"
+provider = "runner"
+
+[[providers.prefixes]]
+prefix = "="
+provider = "calc"

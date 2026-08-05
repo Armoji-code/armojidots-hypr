@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenRGB SDK server
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/openrgb --server --server-host 127.0.0.1
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target

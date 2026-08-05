@@ -1,6 +1,14 @@
 // ── armojidots-hypr · Waybar ────────────────────────
 // Top bar: media pill | clock  ·  workspaces  ·  system status
-{
+//
+// Two bar configs, one per output: DP-2 (main) gets the full bar including
+// the media pill. HDMI-A-2 (portrait side monitor) drops the media pill —
+// it was squishing the workspace numbers off the narrower portrait width
+// whenever media was playing and several workspaces were open. Everything
+// else is shared between the two; only "output" and "modules-left" differ.
+[
+  {
+  "output": "DP-2",
   "layer": "top",
   "position": "top",
   "height": 34,
@@ -62,13 +70,18 @@
   },
 
   "modules-center": ["hyprland/workspaces"],
-  "modules-right": ["tray", "bluetooth", "network", "pulseaudio", "idle_inhibitor", "custom/bluelight", "custom/notifications"],
+  "modules-right": ["tray", "bluetooth", "network", "custom/language", "pulseaudio", "idle_inhibitor", "custom/bluelight", "custom/notifications"],
 
+  // per-monitor group-digit numbering (hyprland.lua's swaysome-alike): monitor
+  // 1 (DP-2) gets 11..19,110, monitor 2 (HDMI-A-2) gets 21..29,210 —
+  // format-icons displays them as 1..10 per monitor
   "hyprland/workspaces": {
     "format": "{icon}",
     "format-icons": {
-      "1": "1", "2": "2", "3": "3", "4": "4", "5": "5",
-      "6": "6", "7": "7", "8": "8", "9": "9", "10": "10"
+      "11": "1", "12": "2", "13": "3", "14": "4", "15": "5",
+      "16": "6", "17": "7", "18": "8", "19": "9", "110": "10",
+      "21": "1", "22": "2", "23": "3", "24": "4", "25": "5",
+      "26": "6", "27": "7", "28": "8", "29": "9", "210": "10"
     }
   },
 
@@ -98,6 +111,16 @@
     "on-click": "kitty --app-id=float-tui -e nmtui",
     "tooltip-format-wifi": "{essid} ({signalStrength}%)\n{ipaddr}",
     "tooltip-format-ethernet": "{ifname}\n{ipaddr}"
+  },
+
+  // keyboard layout: EN/LT. Shift+Alt toggles (hyprland.lua's kb_options
+  // grp:alt_shift_toggle) or click this; either way fires a switch
+  // notification (lang.sh)
+  "custom/language": {
+    "exec": "~/.config/waybar/scripts/lang.sh watch",
+    "return-type": "json",
+    "on-click": "~/.config/waybar/scripts/lang.sh toggle",
+    "tooltip": true
   },
 
   "pulseaudio": {
@@ -142,4 +165,109 @@
     "escape": true,
     "tooltip": false
   }
-}
+  },
+
+  {
+  "output": "HDMI-A-2",
+  "layer": "top",
+  "position": "top",
+  "height": 34,
+  "spacing": 6,
+
+  "margin-top": 8,
+  "margin-left": 12,
+  "margin-right": 12,
+
+  "modules-left": ["clock"],
+  "modules-center": ["hyprland/workspaces"],
+  "modules-right": ["tray", "bluetooth", "network", "custom/language", "pulseaudio", "idle_inhibitor", "custom/bluelight", "custom/notifications"],
+
+  "hyprland/workspaces": {
+    "format": "{icon}",
+    "format-icons": {
+      "11": "1", "12": "2", "13": "3", "14": "4", "15": "5",
+      "16": "6", "17": "7", "18": "8", "19": "9", "110": "10",
+      "21": "1", "22": "2", "23": "3", "24": "4", "25": "5",
+      "26": "6", "27": "7", "28": "8", "29": "9", "210": "10"
+    }
+  },
+
+  "clock": {
+    "format": "{:%H:%M  %Y-%m-%d}",
+    "format-alt": "{:%H:%M  %Y-%B-%d}",
+    "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
+  },
+
+  "tray": {
+    "spacing": 8
+  },
+
+  "bluetooth": {
+    "format": "󰂯",
+    "format-disabled": "󰂲",
+    "format-connected": "󰂱 {num_connections}",
+    "on-click": "kitty --app-id=float-tui -e bluetuith",
+    "tooltip-format": "{controller_alias}\t{controller_address}",
+    "tooltip-format-connected": "{device_enumerate}"
+  },
+
+  "network": {
+    "format-wifi": "󰤨 {essid}",
+    "format-ethernet": "󰈀",
+    "format-disconnected": "󰤭 offline",
+    "on-click": "kitty --app-id=float-tui -e nmtui",
+    "tooltip-format-wifi": "{essid} ({signalStrength}%)\n{ipaddr}",
+    "tooltip-format-ethernet": "{ifname}\n{ipaddr}"
+  },
+
+  "custom/language": {
+    "exec": "~/.config/waybar/scripts/lang.sh watch",
+    "return-type": "json",
+    "on-click": "~/.config/waybar/scripts/lang.sh toggle",
+    "tooltip": true
+  },
+
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-muted": "󰝟 mute",
+    "format-icons": { "default": ["󰕿", "󰖀", "󰕾"] },
+    "on-click": "kitty --app-id=float-tui -e pulsemixer",
+    "tooltip": false
+  },
+
+  "idle_inhibitor": {
+    "format": "{icon}",
+    "format-icons": { "activated": "󰅶", "deactivated": "󰒲" },
+    "start-activated": true,
+    "tooltip-format-activated": "auto-lock: OFF (click to arm)",
+    "tooltip-format-deactivated": "auto-lock: ON"
+  },
+
+  "custom/bluelight": {
+    "exec": "~/.config/waybar/scripts/bluelight.sh status",
+    "return-type": "json",
+    "interval": "once",
+    "signal": 9,
+    "on-click": "~/.config/waybar/scripts/bluelight.sh toggle"
+  },
+
+  "custom/notifications": {
+    "format": "{icon}",
+    "format-icons": {
+      "notification": "󱅫",
+      "none": "󰂚",
+      "dnd-notification": "󰂛",
+      "dnd-none": "󰂛",
+      "inhibited-notification": "󱅫",
+      "inhibited-none": "󰂚",
+      "dnd-inhibited-notification": "󰂛",
+      "dnd-inhibited-none": "󰂛"
+    },
+    "return-type": "json",
+    "exec": "swaync-client -swb",
+    "on-click": "swaync-client -t -sw",
+    "escape": true,
+    "tooltip": false
+  }
+  }
+]

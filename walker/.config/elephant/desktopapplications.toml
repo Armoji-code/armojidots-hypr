@@ -1,0 +1,3 @@
+# sort apps by how often Armin launches them — even before typing
+history = true
+history_when_empty = true

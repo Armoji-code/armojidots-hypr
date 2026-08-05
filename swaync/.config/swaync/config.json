@@ -1,0 +1,33 @@
+{
+  "positionX": "right",
+  "positionY": "top",
+  "control-center-width": 400,
+  "control-center-margin-top": 8,
+  "control-center-margin-right": 12,
+  "control-center-margin-bottom": 12,
+  "notification-window-width": 380,
+  "timeout": 6,
+  "timeout-low": 3,
+  "timeout-critical": 0,
+  "fit-to-screen": false,
+  "keyboard-shortcuts": true,
+  "hide-on-clear": true,
+  "hide-on-action": true,
+  "widgets": [
+    "inhibitors",
+    "title",
+    "dnd",
+    "notifications"
+  ],
+  "widget-config": {
+    "title": {
+      "text": "Notifications",
+      "clear-all-button": true,
+      "button-text": "clear"
+    },
+    "dnd": {
+      "text": "Do not disturb"
+    }
+  },
+  "notification-grouping": false
+}

@@ -1,0 +1,13 @@
+[Unit]
+Description=Armoji OSD (volume/brightness pill)
+After=graphical-session.target
+
+[Service]
+Type=simple
+# gtk4-layer-shell must be loaded before libwayland-client (same as spotlight/dock)
+Environment=LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so
+ExecStart=%h/.local/bin/armoji-osd
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target

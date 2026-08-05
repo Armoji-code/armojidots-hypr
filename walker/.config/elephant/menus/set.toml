@@ -1,0 +1,33 @@
+name = "set"
+name_pretty = "Set"
+icon = "preferences-system"
+
+[[entries]]
+text = "wifi"
+keywords = ["wifi", "network", "internet"]
+icon = "network-wireless"
+actions = { "open" = "kitty --app-id=float-tui -e nmtui" }
+
+[[entries]]
+text = "blue"
+keywords = ["bluetooth", "blue"]
+icon = "bluetooth"
+actions = { "open" = "kitty --app-id=float-tui -e bluetuith" }
+
+[[entries]]
+text = "wallpaper"
+keywords = ["wallpaper", "background"]
+icon = "preferences-desktop-wallpaper"
+actions = { "open" = "~/.local/bin/wallpaper-pick.sh" }
+
+[[entries]]
+text = "color"
+keywords = ["color", "theme", "palette"]
+icon = "preferences-color"
+actions = { "open" = "~/.local/bin/theme.sh pick" }
+
+[[entries]]
+text = "tone"
+keywords = ["tone", "intensity", "saturation"]
+icon = "preferences-desktop-display"
+actions = { "open" = "~/.local/bin/theme.sh tone-pick" }

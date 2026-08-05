@@ -1,0 +1,93 @@
+/* ── armojidots · Spotlight ──────────────────────────────────────────
+   Two windows, each filled edge-to-edge by one translucent pill. No
+   transparent gap inside a window, so SwayFX blur has nothing to bleed
+   into; the sway rule's corner_radius clips each window's blur to its
+   pill shape (capsule for search, 10px for the panel). CSS border-radius
+   here mirrors those so the painted background/border line up with the
+   compositor's clip. colors.css is loaded separately by the app. */
+
+* {
+  font-family: "JetBrainsMono Nerd Font", monospace;
+  color: @fg;
+}
+
+/* windows are transparent; the pill provides the visible surface */
+window.spotlight,
+window.spotlight.background {
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+/* both pills are plain rectangles filling their window; SwayFX corner_radius
+   does ALL the rounding (no GTK arc to mismatch, no rectangular border to clip
+   raggedly at the rounded corners) */
+.pill {
+  background: @bg;
+  border: none;
+}
+
+/* search window: now a LAYER-SHELL surface, so GTK draws the capsule itself
+   (border-radius = half the 40px height = 20) and SwayFX's
+   `layer_effects "spotlight-search" … blur_ignore_transparent` clips the blur
+   to exactly these opaque pixels — real rounded-end glass, crisp desktop in
+   the transparent corners. No border (it would clip raggedly at the ends). */
+.search-pill {
+  border-radius: 20px;
+  border: none;
+  padding: 0 18px;
+}
+
+/* content window: SwayFX rounded this via corner_radius (compositor-side,
+   no CSS needed) — Hyprland's layer_rule has no equivalent rounding field,
+   so that never actually applied here; this was a straight porting gap,
+   not something that regressed later like the blur clipping did. Real CSS
+   border-radius instead, now that ignore_alpha (see hyprland.lua) clips
+   blur to alpha, so it correctly follows this rounded shape too. */
+.content-pill {
+  border-radius: 16px;
+  padding: 10px;
+}
+
+/* search input */
+.search-entry {
+  background: transparent;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  font-size: 18px;
+  caret-color: @accent;
+}
+.search-entry:focus { outline: none; box-shadow: none; }
+
+/* empty-state grid cells */
+.cell {
+  padding: 10px 6px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+}
+.cell-label {
+  font-size: 12px;
+  color: @muted;
+}
+.cell.selected {
+  background: alpha(@accent, 0.22);
+  border: 1px solid alpha(@accent, 0.35);
+}
+.cell.selected .cell-label { color: @fg; }
+
+/* typing-state result rows */
+.list { background: transparent; }
+.row {
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+}
+.row-title { font-size: 15px; }
+.row-subtext { font-size: 12px; color: @muted; }
+.row.selected {
+  background: alpha(@accent, 0.22);
+  border: 1px solid alpha(@accent, 0.35);
+}
+
+scrollbar { opacity: 0; }

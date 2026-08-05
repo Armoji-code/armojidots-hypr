@@ -1,0 +1,15 @@
+[Unit]
+Description=Walker (Spotlight) frontend service
+# The GTK frontend stays resident so the launcher window is instant.
+# It talks to elephant (the data backend) — start after it, but don't
+# hard-fail if elephant is slow; walker shows "Waiting for elephant…".
+After=graphical-session.target elephant.service
+Wants=elephant.service
+
+[Service]
+Type=simple
+ExecStart=walker --gapplication-service
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target

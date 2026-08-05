@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+# ── armojidots-hypr · Dock ──────────────────────────────────────────
+# Custom macOS-style dock. Two gtk4-layer-shell surfaces:
+#
+#   • hotspot — a thin, full-width, transparent strip pinned to the bottom
+#     edge. Pointer entering it reveals the dock (like nwg's hotspot).
+#   • dock    — the visible pill (OVERLAY layer, centered, floats off the
+#     bottom edge). Auto-hides ~1s after the pointer leaves it (and the
+#     hotspot). Contents, left→right:
+#       CachyOS launcher button (glow) │ running-app icons.
+#     Clicking an app focuses its window; clicking the launcher opens
+#     Spotlight.
+#
+# The dock is a layer surface so its blur clips to the CSS pill shape (true
+# capsule) via Hyprland's already-global blur (confirmed sufficient — no
+# per-layer layerrule override needed, see hyprland.lua). Theme colors come
+# from ~/.config/armoji-dock/{style,colors}.css.
+#
+# Ported from armojidots (SwayFX): the only real difference is window
+# enumeration/focus, which used sway's `swaymsg get_tree` (a recursive tree
+# walk) — Hyprland's `hyprctl clients -j` is already a flat list of real
+# windows, so no tree walk is needed at all.
+
+import gi, json, os, signal, subprocess, sys
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gtk4LayerShell", "1.0")
+from gi.repository import Gtk, Gdk, Gio, GLib, Gtk4LayerShell as LS
+
+APP_ID = "org.armojidots.Dock"
+CONFIG = os.path.expanduser("~/.config/armoji-dock")
+LAUNCHER = os.path.expanduser("~/.local/bin/armoji-spotlight")
+DISTRO_LOGO = "/usr/share/icons/cachyos.svg"
+ICON = 40                 # running-app icon size
+HIDE_DELAY = 1000         # ms after leaving the dock before it hides
+HOTSPOT_H = 3             # px reveal strip at the very bottom edge
+TARGET_MONITOR = "DP-2"   # main monitor — the dock always belongs here
+
+
+def find_monitor(name):
+    """Match a GdkMonitor by connector name. Without this, gtk4-layer-shell
+    falls back to "whatever output the compositor currently considers
+    default" at surface-creation time — confirmed live: on a cold boot this
+    landed the whole dock on HDMI-A-2 (the portrait side monitor) instead of
+    DP-2, because armoji-dock.service starts very early, around the same
+    time Hyprland is still enumerating monitors (same race class as the
+    workspace-group init bug). The hotspot then sits at the bottom of a
+    monitor nobody's actually looking at, so the dock never gets hovered
+    open — not a crash, just silently on the wrong screen."""
+    display = Gdk.Display.get_default()
+    for mon in display.get_monitors():
+        if mon.get_connector() == name:
+            return mon
+    return None
+
+
+def hyprctl_dispatch(expr):
+    subprocess.run(["hyprctl", "dispatch", expr], capture_output=True)
+
+
+def clients():
+    try:
+        out = subprocess.run(["hyprctl", "clients", "-j"],
+                             capture_output=True, text=True).stdout
+        return json.loads(out)
+    except Exception:
+        return []
+
+
+def windows():
+    """Every open toplevel window: (address, class, title, workspace_name)."""
+    out = []
+    for c in clients():
+        cls = c.get("class") or ""
+        if not cls or cls.startswith("org.armojidots"):
+            continue
+        ws = (c.get("workspace") or {}).get("name")
+        out.append((c.get("address"), cls, c.get("title") or "", ws))
+    return out
+
+
+_desktop_icon_map = None
+
+
+def _build_desktop_icon_map():
+    """app class (lowercased) -> real icon name, via installed .desktop
+    files. A window's class often ISN'T its icon name (Zen Browser's class
+    is "zen", but its icon is "zen-browser"; Thunar's is "org.xfce.thunar")
+    — StartupWMClass in the .desktop file is the authoritative link, same
+    resolution elephant does for Spotlight (which is why that gets these
+    right already)."""
+    m = {}
+    for app in Gio.AppInfo.get_all():
+        if not isinstance(app, Gio.DesktopAppInfo):
+            continue
+        icon = app.get_icon()
+        names = icon.get_names() if icon and hasattr(icon, "get_names") else None
+        icon_name = names[0] if names else (icon.to_string() if icon else None)
+        if not icon_name:
+            continue
+        wmclass = app.get_startup_wm_class()
+        if wmclass:
+            m[wmclass.lower()] = icon_name
+        did = app.get_id() or ""
+        if did.endswith(".desktop"):
+            did = did[:-len(".desktop")]
+        if did:
+            m[did.lower()] = icon_name
+    return m
+
+
+def resolve_icon_name(cls):
+    global _desktop_icon_map
+    if _desktop_icon_map is None:
+        _desktop_icon_map = _build_desktop_icon_map()
+    return _desktop_icon_map.get((cls or "").lower())
+
+
+def make_icon(name, px):
+    img = Gtk.Image()
+    img.set_pixel_size(px)
+    if name and name.startswith("/") and os.path.exists(name):
+        img.set_from_file(name)
+    elif name:
+        disp = Gdk.Display.get_default()
+        theme = Gtk.IconTheme.get_for_display(disp)
+        if theme.has_icon(name):
+            img.set_from_icon_name(name)
+        elif theme.has_icon(name.lower()):
+            img.set_from_icon_name(name.lower())
+        else:
+            img.set_from_icon_name("application-x-executable")
+    else:
+        img.set_from_icon_name("application-x-executable")
+    return img
+
+
+class Dock(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID,
+                         flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        self.hotspot = None
+        self.dock = None
+        self._hide_src = 0
+        self._css = []
+
+    def do_command_line(self, cmdline):
+        self.hold()
+        if self.hotspot is None:
+            self.build()
+            # live theme reload: theme.sh sends SIGUSR1 after regenerating colors
+            GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
+                                 self._on_reload)
+        return 0
+
+    def _on_reload(self):
+        self.load_css()
+        return True
+
+    # ── build the two surfaces ───────────────────────────────────────
+    def build(self):
+        self.load_css()
+
+        # hotspot: thin, full-width, always mapped; reveals the dock
+        self.hotspot = Gtk.ApplicationWindow(application=self)
+        self.hotspot.set_title("armoji-dock-hotspot")
+        self.hotspot.add_css_class("dock-hotspot")
+        LS.init_for_window(self.hotspot)
+        mon = find_monitor(TARGET_MONITOR)
+        if mon:
+            LS.set_monitor(self.hotspot, mon)
+        LS.set_namespace(self.hotspot, "armoji-dock-hotspot")
+        LS.set_layer(self.hotspot, LS.Layer.TOP)
+        for e in (LS.Edge.BOTTOM, LS.Edge.LEFT, LS.Edge.RIGHT):
+            LS.set_anchor(self.hotspot, e, True)
+        LS.set_exclusive_zone(self.hotspot, -1)
+        strip = Gtk.Box()
+        strip.add_css_class("hotspot-strip")   # near-zero alpha → gets input region
+        strip.set_size_request(-1, HOTSPOT_H)
+        self.hotspot.set_child(strip)
+        hm = Gtk.EventControllerMotion()
+        hm.connect("enter", lambda *_: (self.reveal(), self.cancel_hide()))
+        hm.connect("leave", lambda *_: self.arm_hide())
+        self.hotspot.add_controller(hm)
+        self.hotspot.present()
+
+        # dock: the visible pill (hidden until revealed)
+        self.dock = Gtk.ApplicationWindow(application=self)
+        self.dock.set_title("armoji-dock")
+        self.dock.add_css_class("dock")
+        LS.init_for_window(self.dock)
+        if mon:
+            LS.set_monitor(self.dock, mon)
+        LS.set_namespace(self.dock, "armoji-dock")
+        LS.set_layer(self.dock, LS.Layer.OVERLAY)
+        LS.set_anchor(self.dock, LS.Edge.BOTTOM, True)
+        LS.set_margin(self.dock, LS.Edge.BOTTOM, 8)
+        LS.set_exclusive_zone(self.dock, 0)
+
+        self.pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.pill.add_css_class("pill")
+        self.dock.set_child(self.pill)
+
+        dm = Gtk.EventControllerMotion()
+        dm.connect("enter", lambda *_: self.cancel_hide())
+        dm.connect("leave", lambda *_: self.arm_hide())
+        self.dock.add_controller(dm)
+
+    # ── reveal / hide ────────────────────────────────────────────────
+    def reveal(self):
+        if self.dock.get_visible():
+            return
+        self.rebuild()
+        self.dock.present()
+
+    def hide(self):
+        if self.dock:
+            self.dock.set_visible(False)
+
+    def arm_hide(self):
+        self.cancel_hide()
+        self._hide_src = GLib.timeout_add(HIDE_DELAY, self._do_hide)
+
+    def cancel_hide(self):
+        if self._hide_src:
+            GLib.source_remove(self._hide_src)
+            self._hide_src = 0
+
+    def _do_hide(self):
+        self._hide_src = 0
+        self.hide()
+        return False
+
+    # ── contents ─────────────────────────────────────────────────────
+    def clear(self, box):
+        c = box.get_first_child()
+        while c is not None:
+            nxt = c.get_next_sibling()
+            box.remove(c)
+            c = nxt
+
+    def rebuild(self):
+        self.clear(self.pill)
+
+        # group by workspace, each into its own sub-pill (empty ws = no pill);
+        # sidebars (special-workspace-parked, class starts "sidebar-") go in
+        # their own pill on the right, regardless of which workspace they're
+        # currently shown on, split off by a divider
+        by_ws = {}
+        sidebar = []
+        for address, cls, title, ws in windows():
+            if cls.startswith("sidebar-"):
+                sidebar.append((address, cls, title))
+            else:
+                by_ws.setdefault(ws, []).append((address, cls, title))
+
+        def numeric_ws(ws):
+            try:
+                return (0, int(ws))
+            except (TypeError, ValueError):
+                return (1, 0)   # non-numeric (e.g. special workspace) sorts last
+
+        for ws in sorted(by_ws, key=numeric_ws):
+            self.pill.append(self._ws_pill(by_ws[ws]))
+
+        if sidebar:
+            sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+            sep.add_css_class("sep")
+            self.pill.append(sep)
+            self.pill.append(self._ws_pill(sidebar))
+
+    def _ws_pill(self, apps):
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        box.add_css_class("ws-pill")
+        for address, cls, title in apps:
+            icon_name = resolve_icon_name(cls) or cls
+            b = Gtk.Button()
+            b.add_css_class("app")
+            b.set_child(make_icon(icon_name, ICON))
+            b.set_tooltip_text(title or cls)
+            b.connect("clicked", self.on_app, address)
+            box.append(b)
+        return box
+
+    def on_launcher(self, *_):
+        self.hide()
+        subprocess.Popen([LAUNCHER], start_new_session=True)
+
+    def on_app(self, _btn, address):
+        self.hide()
+        hyprctl_dispatch(f'hl.dsp.focus({{window="address:{address}"}})')
+
+    # ── css ──────────────────────────────────────────────────────────
+    def load_css(self):
+        display = Gdk.Display.get_default()
+        for old in self._css:
+            Gtk.StyleContext.remove_provider_for_display(display, old)
+        self._css = []
+        for fname, prio in (("colors.css", Gtk.STYLE_PROVIDER_PRIORITY_USER),
+                            ("style.css", Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)):
+            path = os.path.join(CONFIG, fname)
+            if not os.path.exists(path):
+                continue
+            p = Gtk.CssProvider()
+            p.load_from_path(path)
+            Gtk.StyleContext.add_provider_for_display(display, p, prio)
+            self._css.append(p)
+
+
+if __name__ == "__main__":
+    sys.exit(Dock().run(sys.argv))

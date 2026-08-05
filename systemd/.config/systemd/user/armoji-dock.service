@@ -1,0 +1,13 @@
+[Unit]
+Description=Armoji Dock (custom layer-shell dock)
+After=graphical-session.target
+
+[Service]
+Type=simple
+# gtk4-layer-shell must be loaded before libwayland-client (same as spotlight)
+Environment=LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so
+ExecStart=%h/.local/bin/armoji-dock --daemon
+Restart=on-failure
+
+[Install]
+WantedBy=graphical-session.target

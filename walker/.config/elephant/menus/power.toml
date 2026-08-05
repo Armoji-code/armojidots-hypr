@@ -1,0 +1,27 @@
+name = "power"
+name_pretty = "Power"
+icon = "system-shutdown"
+
+[[entries]]
+text = "sleep"
+keywords = ["sleep", "suspend"]
+icon = "system-suspend"
+actions = { "go" = "systemctl suspend" }
+
+[[entries]]
+text = "reboot"
+keywords = ["reboot", "restart"]
+icon = "system-reboot"
+actions = { "go" = "systemctl reboot" }
+
+[[entries]]
+text = "shutdown"
+keywords = ["shutdown", "off"]
+icon = "system-shutdown"
+actions = { "go" = "systemctl poweroff" }
+
+[[entries]]
+text = "logout"
+keywords = ["logout", "exit"]
+icon = "system-log-out"
+actions = { "go" = "hyprctl dispatch exit" }

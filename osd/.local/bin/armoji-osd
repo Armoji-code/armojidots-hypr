@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+# ── armojidots · OSD ─────────────────────────────────────────────────
+# Windows-11-style pill popup for volume/brightness. A gtk4-layer-shell
+# OVERLAY surface (renders above fullscreen windows too), resident daemon,
+# triggered over a Unix datagram socket by
+# ~/.config/sway/scripts/osd.sh (called from media-keys.conf).
+#
+# Protocol (datagram, text): "<kind>|<value 0-100>|<muted 0|1>"
+#   kind: "volume" | "brightness"
+
+import gi, os, signal, socket, sys, threading
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gtk4LayerShell", "1.0")
+from gi.repository import Gtk, Gdk, Gio, GLib, Gtk4LayerShell as LS
+
+APP_ID = "org.armojidots.OSD"
+CONFIG = os.path.expanduser("~/.config/armoji-osd")
+SOCK_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "armoji-osd.sock")
+HIDE_DELAY = 1400   # ms
+BAR_W = 160
+PILL_H = 46
+BOTTOM_MARGIN = 110   # above the dock's hotspot strip
+
+VOL_ICONS = ["󰕿", "󰖀", "󰕾"]
+MUTE_ICON = "󰝟"
+BRIGHTNESS_ICON = "󰃞"
+
+
+def icon_for(kind, value, muted):
+    if kind == "volume":
+        if muted:
+            return MUTE_ICON
+        return VOL_ICONS[0 if value < 34 else (1 if value < 67 else 2)]
+    return BRIGHTNESS_ICON
+
+
+class OSD(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.win = None
+        self._hide_src = 0
+        self._css = []
+
+    def do_activate(self):
+        self.hold()
+        self.build()
+        self.start_socket()
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, self._on_reload)
+
+    def _on_reload(self):
+        self.load_css()
+        return True
+
+    # ── build ───────────────────────────────────────────────────────
+    def build(self):
+        self.load_css()
+        self.win = Gtk.ApplicationWindow(application=self)
+        self.win.set_title("armoji-osd")
+        self.win.set_decorated(False)
+        self.win.set_resizable(False)
+        self.win.add_css_class("osd")
+
+        LS.init_for_window(self.win)
+        LS.set_namespace(self.win, "armoji-osd")
+        LS.set_layer(self.win, LS.Layer.OVERLAY)   # above fullscreen windows
+        LS.set_keyboard_mode(self.win, LS.KeyboardMode.NONE)
+        LS.set_anchor(self.win, LS.Edge.BOTTOM, True)
+        LS.set_margin(self.win, LS.Edge.BOTTOM, BOTTOM_MARGIN)
+        LS.set_exclusive_zone(self.win, -1)
+
+        pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        pill.add_css_class("pill")
+        pill.set_size_request(-1, PILL_H)
+        self.win.set_child(pill)
+
+        self.icon = Gtk.Label()
+        self.icon.add_css_class("osd-icon")
+        pill.append(self.icon)
+
+        self.track = Gtk.Box()
+        self.track.add_css_class("track")
+        self.track.set_overflow(Gtk.Overflow.HIDDEN)   # clip the fill to the pill
+        self.track.set_valign(Gtk.Align.CENTER)
+        self.track.set_size_request(BAR_W, -1)
+        self.fill = Gtk.Box()
+        self.fill.add_css_class("fill")
+        self.track.append(self.fill)
+        pill.append(self.track)
+
+        self.pct = Gtk.Label()
+        self.pct.add_css_class("osd-pct")
+        pill.append(self.pct)
+
+    # ── show / hide ─────────────────────────────────────────────────
+    def show_level(self, kind, value, muted=False):
+        value = max(0, min(100, value))
+        self.icon.set_label(icon_for(kind, value, muted))
+        self.fill.set_size_request(int(BAR_W * value / 100), -1)
+        (self.fill.add_css_class if muted else self.fill.remove_css_class)("muted")
+        self.pct.set_label("mute" if muted else f"{value}%")
+        self.win.present()
+        self.arm_hide()
+        return False
+
+    def arm_hide(self):
+        if self._hide_src:
+            GLib.source_remove(self._hide_src)
+        self._hide_src = GLib.timeout_add(HIDE_DELAY, self._do_hide)
+
+    def _do_hide(self):
+        self._hide_src = 0
+        self.win.set_visible(False)
+        return False
+
+    # ── socket ──────────────────────────────────────────────────────
+    def start_socket(self):
+        try:
+            os.unlink(SOCK_PATH)
+        except FileNotFoundError:
+            pass
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        s.bind(SOCK_PATH)
+        self._sock = s
+        threading.Thread(target=self._listen, daemon=True).start()
+
+    def _listen(self):
+        while True:
+            try:
+                data = self._sock.recv(256).decode().strip()
+            except Exception:
+                continue
+            parts = data.split("|")
+            if len(parts) < 2:
+                continue
+            try:
+                value = int(float(parts[1]))
+            except ValueError:
+                continue
+            muted = len(parts) > 2 and parts[2] == "1"
+            GLib.idle_add(self.show_level, parts[0], value, muted)
+
+    # ── css ─────────────────────────────────────────────────────────
+    def load_css(self):
+        display = Gdk.Display.get_default()
+        for old in self._css:
+            Gtk.StyleContext.remove_provider_for_display(display, old)
+        self._css = []
+        for fname, prio in (("colors.css", Gtk.STYLE_PROVIDER_PRIORITY_USER),
+                            ("style.css", Gtk.STYLE_PROVIDER_PRIORITY_USER + 1)):
+            path = os.path.join(CONFIG, fname)
+            if not os.path.exists(path):
+                continue
+            p = Gtk.CssProvider()
+            p.load_from_path(path)
+            Gtk.StyleContext.add_provider_for_display(display, p, prio)
+            self._css.append(p)
+
+
+if __name__ == "__main__":
+    sys.exit(OSD().run(sys.argv))

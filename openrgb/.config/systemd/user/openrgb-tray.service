@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenRGB tray applet (client mode, connects to openrgb.service)
+After=openrgb.service graphical-session.target
+Requires=openrgb.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/openrgb --client 127.0.0.1:6742 --startminimized
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
