@@ -1,13 +1,24 @@
 #!/bin/sh
 # Quick-access sidebar terminals — pinned (sticky, sway's "sticky enable")
-# floating windows, shown by moving them on-screen and hidden by moving them
-# off-screen. NOT Hyprland special workspaces: that looked right at first but
-# broke badly in real use — while a special workspace is the active/shown one
-# on a monitor, any NEW window opened while it's visible silently joins it
-# too (so hiding the sidebar hid whatever you'd just opened right along with
-# it), and focus wouldn't reliably move to regular windows either (special
-# workspaces are a modal overlay, not a peer to normal ones). A plain pinned
-# floating window sidestepped both problems entirely once confirmed live.
+# floating windows while SHOWN. NOT Hyprland special workspaces: that looked
+# right at first but broke badly in real use — while a special workspace is
+# the active/shown one on a monitor, any NEW window opened while it's
+# visible silently joins it too (so hiding the sidebar hid whatever you'd
+# just opened right along with it), and focus wouldn't reliably move to
+# regular windows either (special workspaces are a modal overlay, not a
+# peer to normal ones).
+#
+# Hide/show is now pin + workspace, not on/off-screen positioning — see the
+# big comment in sidebar-control.sh's apply() for why: a permanently-pinned
+# window merely moved off-screen looked right in every manual test, but
+# switching workspaces ON THE SAME MONITOR turned out to yank any pinned
+# window that's off its monitor's visible box right back into view, no
+# matter how far off-screen it was. Hidden now means unpinned + parked on
+# workspace 999 (a plain regular workspace nobody's Win+N bind can reach and
+# no monitor ever makes active — NOT a special workspace, so none of the
+# problems above apply), which Hyprland leaves alone across every workspace
+# switch since it's simply not rendered anywhere.
+#
 # Position/size are controlled separately (sidebar-control.sh, Win+Shift+
 # Arrows / Win+Arrows) and persisted per-sidebar.
 # usage: sidebar.sh term | claude

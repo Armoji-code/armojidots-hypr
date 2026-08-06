@@ -82,15 +82,51 @@ if m:
 "
 }
 
+# Dedicated workspace ID that no monitor group's Win+N binds can ever reach
+# (hyprland.lua's group_ws tops out at group*10+10, so max 110/210/310) and
+# that's excluded from waybar's workspace switcher (see its
+# ignore-workspaces config) — hidden sidebars live here. See the long
+# comment on HIDE/SHOW in apply() below for why this replaced the old
+# move-off-screen-while-still-pinned approach.
+#
+# IMPORTANT: every window.move dispatch that sets `workspace` below also
+# needs `follow=false`, or it does NOT behave like a plain reassignment —
+# confirmed live it drags the monitor's ACTIVE workspace along with it too
+# (i.e. it's the "movetoworkspace" behavior, not "movetoworkspacesilent"),
+# which briefly switched the whole visible desktop to workspace 999 during
+# testing. `silent=true` looked like the obvious flag name and does NOT
+# work — `follow=false` is the one that actually suppresses it.
+HIDDEN_WS=999
+
+is_pinned() {
+  hyprctl clients -j | python3 -c "
+import json, sys
+for c in json.load(sys.stdin):
+    if c.get('class') == sys.argv[1]:
+        print('yes' if c.get('pinned') else 'no')
+        break
+" "$1"
+}
+
+client_workspace() {
+  hyprctl clients -j | python3 -c "
+import json, sys
+for c in json.load(sys.stdin):
+    if c.get('class') == sys.argv[1]:
+        print(c['workspace']['id'])
+        break
+" "$1"
+}
+
+active_workspace() {
+  hyprctl activeworkspace -j | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])"
+}
+
 apply() {
   name="$1"
 
-  # hidden = moved just past the edge it's docked to, not a workspace change
-  # (see sidebar.sh for why) — this is the single source of truth for "where
-  # is this sidebar right now", shown or not. Computed from the same
-  # geometry as the shown position below (not a single far-off-screen
-  # coordinate) so the move animation is a short, normal-looking slide off
-  # the relevant edge instead of a comically long cross-screen jump.
+  # hidden = single source of truth for "where is this sidebar right now",
+  # shown or not (see sidebar.sh for the toggle logic).
   hidden=$(cat "$STATE_DIR/${name}.hidden" 2>/dev/null || echo yes)
 
   pos=$(cat "$STATE_DIR/${name}.pos" 2>/dev/null || echo left)
@@ -145,18 +181,49 @@ apply() {
 
   hyprctl dispatch "hl.dsp.window.resize({window=\"class:$name\", x=$w, y=$h})" >/dev/null
 
+  # HIDE/SHOW via pin state + workspace, NOT off-screen positioning.
+  #
+  # The old approach kept the window permanently pinned (visible on every
+  # workspace by design) and "hid" it by moving it just off a monitor edge.
+  # That looked right in every manual test, but broke for real: confirmed
+  # live that switching workspaces ON THE SAME MONITOR — via the exact
+  # hl.dsp.focus({workspace=...}) dispatch these binds already use, no
+  # window creation or fullscreen involved — makes Hyprland clamp every
+  # PINNED floating window back inside that monitor's visible box. It
+  # doesn't matter which direction or how far off-screen it was moved
+  # (tested up/above AND far to the right, past neighboring monitors
+  # entirely — both got yanked back to just inside the monitor's edge the
+  # instant the active workspace changed). A pinned window being
+  # off-monitor is apparently not a state Hyprland is willing to leave
+  # alone across a workspace switch. Cross-monitor switches don't trigger
+  # this — only same-monitor ones, which matches what was actually
+  # reported ("sidebar reappears switching workspaces" — always meant same
+  # monitor, never explicitly cross-monitor, and testing confirmed the
+  # distinction is real).
+  #
+  # Fix: while hidden, UNPIN it and park it on $HIDDEN_WS — a workspace ID
+  # no monitor ever makes active (see the constant's own comment). An
+  # unpinned window on a workspace that's never active simply isn't
+  # rendered, and isn't a "pinned window off its monitor" as far as
+  # Hyprland's clamp logic is concerned, so nothing pulls it back —
+  # confirmed via a hands-off polling test cycling through same-monitor AND
+  # cross-monitor workspace switches repeatedly, no movement at all. When
+  # shown again: move it onto whatever the currently-focused monitor's
+  # active workspace actually is (not a fixed one — you may have switched
+  # workspaces while it was hidden), re-pin it, then position it on-screen.
+  # Both is_pinned/client_workspace checks before dispatching a change are
+  # deliberate, not just tidiness — apply() also runs from toggle-sides/
+  # toggle-mode/toggle-size/position while ALREADY hidden or ALREADY shown,
+  # and hl.dsp.window.pin is a TOGGLE, not a set-to-value — calling it
+  # unconditionally on every apply() would flip pin state the wrong way on
+  # every second call.
   if [ "$hidden" = "yes" ]; then
-    # always up, off the top of whichever monitor it's actually on —
-    # regardless of dock side. Going left/right off this output's own edge
-    # can land inside a horizontally-adjacent monitor instead of actually
-    # being hidden (side-by-side layout), and going all the way past the
-    # true combined virtual-desktop edge turns a docked-on-the-right-hand-
-    # monitor sidebar into a slide across the entire desktop width. Up is
-    # short (bounded by this monitor's own height, using the window's own
-    # height $h so it clears fully regardless of dock orientation) and
-    # never crosses into a neighboring monitor either way.
-    hyprctl dispatch "hl.dsp.window.move({window=\"class:$name\", x=$rx, y=$((oy - h - 50))})" >/dev/null
+    [ "$(is_pinned "$name")" = "yes" ] && hyprctl dispatch "hl.dsp.window.pin({window=\"class:$name\"})" >/dev/null
+    [ "$(client_workspace "$name")" = "$HIDDEN_WS" ] || hyprctl dispatch "hl.dsp.window.move({window=\"class:$name\", workspace=$HIDDEN_WS, follow=false})" >/dev/null
   else
+    cur_ws=$(active_workspace)
+    [ "$(client_workspace "$name")" = "$cur_ws" ] || hyprctl dispatch "hl.dsp.window.move({window=\"class:$name\", workspace=$cur_ws, follow=false})" >/dev/null
+    [ "$(is_pinned "$name")" = "yes" ] || hyprctl dispatch "hl.dsp.window.pin({window=\"class:$name\"})" >/dev/null
     hyprctl dispatch "hl.dsp.window.move({window=\"class:$name\", x=$rx, y=$ry})" >/dev/null
   fi
 }

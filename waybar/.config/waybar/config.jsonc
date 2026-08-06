@@ -77,6 +77,11 @@
   // format-icons displays them as 1..10 per monitor
   "hyprland/workspaces": {
     "format": "{icon}",
+    // 999 is sidebar.sh's hidden-storage workspace (see [[armojidots-hypr-port]])
+    // — hidden sidebars live there so Hyprland's pinned-window bounds-clamp
+    // never touches them; must never show a button here or it'd be a real,
+    // clickable, always-empty workspace next to the real ones.
+    "ignore-workspaces": ["^999$"],
     "format-icons": {
       "11": "1", "12": "2", "13": "3", "14": "4", "15": "5",
       "16": "6", "17": "7", "18": "8", "19": "9", "110": "10",
@@ -134,7 +139,7 @@
   "idle_inhibitor": {
     "format": "{icon}",
     "format-icons": { "activated": "󰅶", "deactivated": "󰒲" },
-    "start-activated": true,
+    "start-activated": false,
     "tooltip-format-activated": "auto-lock: OFF (click to arm)",
     "tooltip-format-deactivated": "auto-lock: ON"
   },
@@ -184,6 +189,11 @@
 
   "hyprland/workspaces": {
     "format": "{icon}",
+    // 999 is sidebar.sh's hidden-storage workspace (see [[armojidots-hypr-port]])
+    // — hidden sidebars live there so Hyprland's pinned-window bounds-clamp
+    // never touches them; must never show a button here or it'd be a real,
+    // clickable, always-empty workspace next to the real ones.
+    "ignore-workspaces": ["^999$"],
     "format-icons": {
       "11": "1", "12": "2", "13": "3", "14": "4", "15": "5",
       "16": "6", "17": "7", "18": "8", "19": "9", "110": "10",
@@ -238,7 +248,7 @@
   "idle_inhibitor": {
     "format": "{icon}",
     "format-icons": { "activated": "󰅶", "deactivated": "󰒲" },
-    "start-activated": true,
+    "start-activated": false,
     "tooltip-format-activated": "auto-lock: OFF (click to arm)",
     "tooltip-format-deactivated": "auto-lock: ON"
   },

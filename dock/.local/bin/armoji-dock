@@ -21,7 +21,7 @@
 # walk) — Hyprland's `hyprctl clients -j` is already a flat list of real
 # windows, so no tree walk is needed at all.
 
-import gi, json, os, signal, subprocess, sys
+import gi, json, math, os, signal, subprocess, sys
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
 from gi.repository import Gtk, Gdk, Gio, GLib, Gtk4LayerShell as LS
@@ -30,7 +30,9 @@ APP_ID = "org.armojidots.Dock"
 CONFIG = os.path.expanduser("~/.config/armoji-dock")
 LAUNCHER = os.path.expanduser("~/.local/bin/armoji-spotlight")
 DISTRO_LOGO = "/usr/share/icons/cachyos.svg"
-ICON = 40                 # running-app icon size
+ICON = 40                 # running-app icon size at rest
+ICON_MAGNIFIED = 72       # size of the icon nearest the pointer
+MAGNIFY_RADIUS = 120      # px either side of an icon where the effect fades to 0
 HIDE_DELAY = 1000         # ms after leaving the dock before it hides
 HOTSPOT_H = 3             # px reveal strip at the very bottom edge
 TARGET_MONITOR = "DP-2"   # main monitor — the dock always belongs here
@@ -71,7 +73,10 @@ def windows():
     out = []
     for c in clients():
         cls = c.get("class") or ""
-        if not cls or cls.startswith("org.armojidots"):
+        # control-room-* live permanently on DP-1 (see [[control-room-tv]])
+        # — an always-there dashboard, not something you'd "switch to" from
+        # a dock the way a real running app is.
+        if not cls or cls.startswith("org.armojidots") or cls.startswith("control-room"):
             continue
         ws = (c.get("workspace") or {}).get("name")
         out.append((c.get("address"), cls, c.get("title") or "", ws))
@@ -142,6 +147,10 @@ class Dock(Gtk.Application):
         self.dock = None
         self._hide_src = 0
         self._css = []
+        self._icons = []            # Gtk.Image widgets currently in the pill
+        self._base_positions = None # [(img, base_center_x)], see on_dock_motion
+        self._icon_seq = 0          # ever-incrementing, for unique per-icon CSS names
+        self._magnify_provider = None
 
     def do_command_line(self, cmdline):
         self.hold()
@@ -205,6 +214,15 @@ class Dock(Gtk.Application):
         dm.connect("leave", lambda *_: self.arm_hide())
         self.dock.add_controller(dm)
 
+        # macOS-style magnification: a second motion controller scoped to
+        # the pill itself, so its coordinates land directly in the same
+        # frame as the base positions captured in on_dock_motion (no
+        # coordinate-space conversion needed between this and self.dock).
+        pm = Gtk.EventControllerMotion()
+        pm.connect("motion", self.on_dock_motion)
+        pm.connect("leave", self.on_dock_leave)
+        self.pill.add_controller(pm)
+
     # ── reveal / hide ────────────────────────────────────────────────
     def reveal(self):
         if self.dock.get_visible():
@@ -240,6 +258,8 @@ class Dock(Gtk.Application):
 
     def rebuild(self):
         self.clear(self.pill)
+        self._icons = []
+        self._base_positions = None  # stale after a rebuild — recomputed lazily, see on_dock_motion
 
         # group by workspace, each into its own sub-pill (empty ws = no pill);
         # sidebars (special-workspace-parked, class starts "sidebar-") go in
@@ -273,13 +293,73 @@ class Dock(Gtk.Application):
         box.add_css_class("ws-pill")
         for address, cls, title in apps:
             icon_name = resolve_icon_name(cls) or cls
+            img = make_icon(icon_name, ICON)
+            self._icon_seq += 1
+            img.set_name(f"dock-icon-{self._icon_seq}")  # unique CSS id, see on_dock_motion
             b = Gtk.Button()
             b.add_css_class("app")
-            b.set_child(make_icon(icon_name, ICON))
+            b.set_child(img)
             b.set_tooltip_text(title or cls)
             b.connect("clicked", self.on_app, address)
             box.append(b)
+            self._icons.append(img)
         return box
+
+    # ── macOS-style magnification ───────────────────────────────────────
+    # Driven directly off live pointer motion (same as the real dock —
+    # there's no separate animation timer, the "animation" comes from
+    # motion events already firing at a high enough rate to look smooth).
+    # Distances are computed against BASE positions captured once at the
+    # start of a hover pass, not the current (possibly-already-magnified)
+    # layout — recomputing against live positions on every motion event
+    # would feed back on itself: growing an icon shifts its neighbors,
+    # which would shift the distance calc, which would change the growth,
+    # oscillating instead of settling.
+    #
+    # Scaling is done with a CSS `transform: scale()` on each icon, NOT by
+    # changing Gtk.Image's pixel_size like a first pass did — pixel_size
+    # changes the image's actual requested size, which the surrounding
+    # button/ws-pill then reflows to fit, growing the whole pill background
+    # along with the icon (confirmed with a standalone test: two otherwise
+    # identical boxes, only one with a scaled child, measured/allocated
+    # IDENTICALLY at every size — transform is purely a paint-time effect
+    # in this GTK version, 4.22, and never touches layout at all). Each
+    # icon gets a unique widget name (dock-icon-N) so a small per-frame
+    # stylesheet can target them individually — GTK4 has no simpler
+    # "set one CSS property on this specific widget instance" API.
+    def on_dock_motion(self, _controller, x, _y):
+        if self._base_positions is None:
+            self._base_positions = []
+            for img in self._icons:
+                ok, bounds = img.compute_bounds(self.pill)
+                if ok:
+                    self._base_positions.append((img, bounds.get_x() + bounds.get_width() / 2))
+
+        rules = []
+        for img, base_cx in self._base_positions:
+            distance = abs(x - base_cx)
+            t = min(distance / MAGNIFY_RADIUS, 1.0)
+            falloff = (math.cos(t * math.pi) + 1) / 2  # 1 at distance=0, 0 at the radius edge
+            scale = 1 + (ICON_MAGNIFIED / ICON - 1) * falloff
+            if scale > 1.01:
+                rules.append(f"#{img.get_name()} {{ transform: scale({scale:.3f}); }}")
+        self._set_magnify_css("\n".join(rules))
+
+    def on_dock_leave(self, *_):
+        self._set_magnify_css("")
+        self._base_positions = None
+
+    def _set_magnify_css(self, css_text):
+        display = Gdk.Display.get_default()
+        if self._magnify_provider is not None:
+            Gtk.StyleContext.remove_provider_for_display(display, self._magnify_provider)
+            self._magnify_provider = None
+        if css_text:
+            p = Gtk.CssProvider()
+            p.load_from_string(css_text)
+            Gtk.StyleContext.add_provider_for_display(
+                display, p, Gtk.STYLE_PROVIDER_PRIORITY_USER + 10)
+            self._magnify_provider = p
 
     def on_launcher(self, *_):
         self.hide()

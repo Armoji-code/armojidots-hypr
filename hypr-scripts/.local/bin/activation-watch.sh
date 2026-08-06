@@ -9,13 +9,22 @@
 # the normal urgent-border flash. This also auto-closes Viber's separate
 # "new message" toast window on open — Hyprland's windowrule engine has no
 # declarative "close on match" action (unlike sway's for_window ... kill).
+#
+# sidebar-term/sidebar-claude are also excluded for the same reason, found
+# live: sidebar-claude runs an actual `claude` CLI session, which raises an
+# urgent hint on its own when it finishes responding — auto-focusing (and,
+# per Hyprland's own focus-on-a-floating-window behavior, effectively
+# un-hiding) a sidebar the user had deliberately hidden via its own toggle
+# is exactly the same "constantly disruptive" problem Viber has, just
+# triggered by Claude finishing a reply instead of an incoming message.
+# See [[control-room-tv]]/[[armojidots-hypr-port]] memory notes.
 
 import json
 import os
 import socket
 import subprocess
 
-EXCEPTED_URGENT_CLASSES = {"viber"}
+EXCEPTED_URGENT_CLASSES = {"viber", "sidebar-term", "sidebar-claude"}
 
 
 def socket_path():
