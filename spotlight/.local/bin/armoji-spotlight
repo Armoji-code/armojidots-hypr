@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
 # ── armojidots-hypr · Spotlight ─────────────────────────────────────
-# A custom launcher built as TWO coordinated LAYER-SHELL surfaces (namespaces
-# "spotlight-search" and "spotlight-list"):
+# A custom launcher built as ONE layer-shell surface (namespace "spotlight")
+# containing the search capsule, a transparent gap, and the results panel
+# stacked vertically in a single window.
 #
-#   • search window  — the capsule. Holds the entry + keyboard focus
-#     (KeyboardMode.EXCLUSIVE — see below).
-#   • list window    — the content panel, anchored directly below the search
-#     bar and growing DOWNWARD as results change. KeyboardMode.NONE (mouse
-#     only).
+# This used to be TWO separate layer-shell surfaces (search + list) so the
+# gap between them would be real desktop rather than a themed spacer. That
+# looked right and matched real Hyprland behavior in every manual check, but
+# broke a much more basic thing: with the search surface holding
+# KeyboardMode.EXCLUSIVE and the list surface next to it (same client, same
+# app, two separate wl_surfaces), the list surface stopped receiving ANY
+# pointer input at all — not just clicks, scrolling too — reported live by
+# Armin, not something reproducible through synthetic testing on this box.
+# Every other GTK layer-shell launcher (wofi, tofi, etc.) uses a single
+# surface for exactly this kind of UI, which sidesteps the whole class of
+# multi-surface-one-client keyboard/pointer routing edge cases rather than
+# depending on it working. The "gap is real desktop" effect still works
+# here: the spacer between the two pills is just an unstyled, fully
+# transparent Gtk.Box, and Hyprland's blur layer_rule (ignore_alpha=0.5,
+# see hyprland.lua) already skips blurring anything that transparent, so the
+# desktop still shows through crisp, same as before.
 #
-# Both are placed by anchors + margins, not window-manager move commands. The
-# gap between them is real desktop, so it stays crisp. If the gtk4-layer-shell
-# binding is missing, both fall back to normal floating windows placed via
-# hyprctl (rounded rectangles, no true capsule, but still functional).
+# Placed by anchors + margins, not window-manager move commands. If the
+# gtk4-layer-shell binding is missing, falls back to a normal floating
+# window placed via hyprctl (rounded rectangle, no true capsule, but still
+# functional).
 #
 # Elephant is the search/data backend (fuzzy apps + usage ranking + calc);
 # we own the UI, so every mode gets its own layout — a grid when empty, a
 # list when typing, and our own command providers (/power /set /web /keys).
 #
 # Resident: started once as `armoji-spotlight --daemon` (systemd user
-# service); the keybind runs `armoji-spotlight`, which toggles the windows
+# service); the keybind runs `armoji-spotlight`, which toggles the window
 # via the running instance, so it opens instantly. Closes on Escape, on
-# launch, or when focus leaves both windows.
+# launch, or when focus leaves the launcher.
 #
 # Ported from armojidots (SwayFX): only the compositor IPC calls changed —
 # `swaymsg -t get_outputs` -> `hyprctl monitors -j` (position()), and
@@ -246,8 +258,7 @@ class Spotlight(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID,
                          flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
-        self.search_win = None
-        self.list_win = None
+        self.win = None
         self.cells = []
         self.sel = 0
         self._was_active = False
@@ -258,7 +269,7 @@ class Spotlight(Gtk.Application):
     def do_command_line(self, cmdline):
         if "--daemon" in cmdline.get_arguments():
             self.hold()
-            self.ensure_windows()
+            self.ensure_window()
             # live theme reload: theme.sh sends SIGUSR1 after regenerating
             # colors.css, so the resident launcher re-reads it without a restart
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
@@ -271,36 +282,31 @@ class Spotlight(Gtk.Application):
         self.load_css()
         return True   # keep the handler installed
 
-    def ensure_windows(self):
-        if self.search_win is not None:
+    def ensure_window(self):
+        if self.win is not None:
             return
         self.load_css()
 
-        # search window — layer-shell surface so it can be a TRUE capsule
-        self.search_win = Gtk.ApplicationWindow(application=self)
-        self.search_win.set_title("spotlight-search")
-        self.search_win.set_decorated(False)
-        self.search_win.set_resizable(False)
-        self.search_win.add_css_class("spotlight")
-        self.search_win.set_hide_on_close(True)
+        self.win = Gtk.ApplicationWindow(application=self)
+        self.win.set_title("spotlight")
+        self.win.set_decorated(False)
+        self.win.set_resizable(False)
+        self.win.add_css_class("spotlight")
+        self.win.set_hide_on_close(True)
         if LayerShell is not None:
-            LayerShell.init_for_window(self.search_win)
-            LayerShell.set_namespace(self.search_win, "spotlight-search")
-            LayerShell.set_layer(self.search_win, LayerShell.Layer.OVERLAY)
-            # EXCLUSIVE: the list window is KeyboardMode.NONE, but with two
-            # layer surfaces mapped, ON_DEMAND still can't reliably pull
-            # keyboard focus onto this one — typing/arrows/Esc would silently
-            # go nowhere. EXCLUSIVE forces the seat's keyboard onto the search bar.
-            LayerShell.set_keyboard_mode(self.search_win,
-                                         LayerShell.KeyboardMode.EXCLUSIVE)
+            LayerShell.init_for_window(self.win)
+            LayerShell.set_namespace(self.win, "spotlight")
+            LayerShell.set_layer(self.win, LayerShell.Layer.OVERLAY)
+            LayerShell.set_keyboard_mode(self.win, LayerShell.KeyboardMode.EXCLUSIVE)
             # anchor top-left; margins in position() do the actual placement.
-            # exclusive_zone -1 => margins are from the true output edge (not
-            # the waybar-shrunk usable area), so they match the list window's
-            # absolute coordinates.
-            LayerShell.set_anchor(self.search_win, LayerShell.Edge.TOP, True)
-            LayerShell.set_anchor(self.search_win, LayerShell.Edge.LEFT, True)
-            LayerShell.set_exclusive_zone(self.search_win, -1)
-        self.search_win.connect("notify::is-active", self.on_active)
+            # exclusive_zone -1 => margins are from the true output edge, not
+            # the waybar-shrunk usable area.
+            LayerShell.set_anchor(self.win, LayerShell.Edge.TOP, True)
+            LayerShell.set_anchor(self.win, LayerShell.Edge.LEFT, True)
+            LayerShell.set_exclusive_zone(self.win, -1)
+        self.win.connect("notify::is-active", self.on_active)
+
+        column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
         search_pill = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         search_pill.add_css_class("pill")
@@ -313,34 +319,26 @@ class Spotlight(Gtk.Application):
         self.entry.connect("changed", self.on_changed)
         self.entry.connect("activate", lambda *_: self.activate_selected())
         search_pill.append(self.entry)
-        self.search_win.set_child(search_pill)
+        column.append(search_pill)
 
-        keys = Gtk.EventControllerKey()
-        keys.connect("key-pressed", self.on_key)
-        self.search_win.add_controller(keys)
-
-        # list window — content panel, grows downward
-        self.list_win = Gtk.ApplicationWindow(application=self)
-        self.list_win.set_title("spotlight-list")
-        self.list_win.set_decorated(False)
-        self.list_win.set_resizable(False)
-        self.list_win.add_css_class("spotlight")
-        self.list_win.set_hide_on_close(True)
-        if LayerShell is not None:
-            LayerShell.init_for_window(self.list_win)
-            LayerShell.set_namespace(self.list_win, "spotlight-list")
-            LayerShell.set_layer(self.list_win, LayerShell.Layer.OVERLAY)
-            LayerShell.set_keyboard_mode(self.list_win, LayerShell.KeyboardMode.NONE)
-            LayerShell.set_anchor(self.list_win, LayerShell.Edge.TOP, True)
-            LayerShell.set_anchor(self.list_win, LayerShell.Edge.LEFT, True)
-            LayerShell.set_exclusive_zone(self.list_win, -1)
-        self.list_win.connect("notify::is-active", self.on_active)
+        # the real-desktop gap between the two pills — see the header comment
+        # for why this is a plain transparent spacer inside one window now,
+        # not two separate layer-shell surfaces
+        spacer = Gtk.Box()
+        spacer.set_size_request(-1, GAP)
+        column.append(spacer)
 
         content_pill = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         content_pill.add_css_class("pill")
         content_pill.add_css_class("content-pill")
         content_pill.set_size_request(WIDTH, -1)
-        self.list_win.set_child(content_pill)
+        column.append(content_pill)
+
+        self.win.set_child(column)
+
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self.on_key)
+        self.win.add_controller(keys)
 
         self.grid = Gtk.FlowBox()
         self.grid.add_css_class("grid")
@@ -362,8 +360,8 @@ class Spotlight(Gtk.Application):
 
     # ── show / hide / position ───────────────────────────────────────
     def toggle(self):
-        self.ensure_windows()
-        if self.search_win.get_visible():
+        self.ensure_window()
+        if self.win.get_visible():
             self.hide()
         else:
             self.show()
@@ -372,8 +370,7 @@ class Spotlight(Gtk.Application):
         self._was_active = False
         self._closeable = False          # don't close during the open churn
         self.entry.set_text("")
-        self.list_win.present()          # present list first…
-        self.search_win.present()        # …so search ends up focused + on top
+        self.win.present()
         self.entry.grab_focus()
         self.show_empty()
         GLib.timeout_add(20, self.position)   # place once mapped
@@ -386,10 +383,8 @@ class Spotlight(Gtk.Application):
 
     def hide(self, *_):
         self._was_active = False
-        if self.list_win:
-            self.list_win.set_visible(False)
-        if self.search_win:
-            self.search_win.set_visible(False)
+        if self.win:
+            self.win.set_visible(False)
 
     def position(self):
         try:
@@ -404,25 +399,16 @@ class Spotlight(Gtk.Application):
         w, h = o["width"], o["height"]
         mx = (w - WIDTH) // 2          # centered horizontally
         my = int(h * TOP_FRAC)        # anchored this far down
-        ly = my + SEARCH_H + GAP                # list: directly below the search bar
-        # both are layer-shell surfaces placed by anchors + margins
         if LayerShell is not None:
             mon = self._gdk_monitor(o.get("name"))
             if mon is not None:
-                LayerShell.set_monitor(self.search_win, mon)
-                LayerShell.set_monitor(self.list_win, mon)
-            LayerShell.set_margin(self.search_win, LayerShell.Edge.LEFT, mx)
-            LayerShell.set_margin(self.search_win, LayerShell.Edge.TOP, my)
-            LayerShell.set_margin(self.list_win, LayerShell.Edge.LEFT, mx)
-            LayerShell.set_margin(self.list_win, LayerShell.Edge.TOP, ly)
+                LayerShell.set_monitor(self.win, mon)
+            LayerShell.set_margin(self.win, LayerShell.Edge.LEFT, mx)
+            LayerShell.set_margin(self.win, LayerShell.Edge.TOP, my)
         else:
-            x = o["x"] + mx
             hyprctl_dispatch(
                 f'hl.dsp.window.move({{window="class:{APP_ID}", '
-                f'title="spotlight-search", x={x}, y={o["y"] + my}}})')
-            hyprctl_dispatch(
-                f'hl.dsp.window.move({{window="class:{APP_ID}", '
-                f'title="spotlight-list", x={x}, y={o["y"] + ly}}})')
+                f'title="spotlight", x={o["x"] + mx}, y={o["y"] + my}}})')
         self.focus_search()
         return False    # one-shot
 
@@ -442,27 +428,21 @@ class Spotlight(Gtk.Application):
         # (EXCLUSIVE) onto it, then focus the entry widget inside it
         if LayerShell is None:
             hyprctl_dispatch(
-                f'hl.dsp.focus({{window="class:{APP_ID}", title="spotlight-search"}})')
+                f'hl.dsp.focus({{window="class:{APP_ID}", title="spotlight"}})')
         else:
-            self.search_win.present()
+            self.win.present()
         self.entry.grab_focus()
 
-    def _any_active(self):
-        return ((self.search_win and self.search_win.is_active()) or
-                (self.list_win and self.list_win.is_active()))
-
     def on_active(self, *_):
-        if self._any_active():
+        if self.win.is_active():
             self._was_active = True
         else:
-            # focus may just be moving to the OTHER launcher window — defer the
-            # close check so landing on the sibling cancels it
             GLib.timeout_add(120, self._check_close)
 
     def _check_close(self):
         if (FOCUS_OUT_CLOSE and self._closeable and self._was_active
-                and not self._any_active()
-                and self.search_win.get_visible()):
+                and not self.win.is_active()
+                and self.win.get_visible()):
             self.hide()
         return False
 
@@ -521,9 +501,11 @@ class Spotlight(Gtk.Application):
         self.select(0)
 
     def arm_click(self, widget, index):
+        # Fires on "pressed" rather than "released" — same as most launcher
+        # UIs (rofi et al.), feels more immediate and has no downside here.
         click = Gtk.GestureClick()
-        click.connect("released", lambda *_: (self.select(index),
-                                              self.activate_selected()))
+        click.connect("pressed", lambda *_: (self.select(index),
+                                             self.activate_selected()))
         widget.add_controller(click)
         motion = Gtk.EventControllerMotion()
         motion.connect("enter", lambda *_: self.select(index))

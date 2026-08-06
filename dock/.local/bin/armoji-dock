@@ -149,8 +149,7 @@ class Dock(Gtk.Application):
         self._css = []
         self._icons = []            # Gtk.Image widgets currently in the pill
         self._base_positions = None # [(img, base_center_x)], see on_dock_motion
-        self._icon_seq = 0          # ever-incrementing, for unique per-icon CSS names
-        self._magnify_provider = None
+        self._icon_seq = 0          # ever-incrementing, for unique per-icon widget names
 
     def do_command_line(self, cmdline):
         self.hold()
@@ -288,17 +287,52 @@ class Dock(Gtk.Application):
             self.pill.append(sep)
             self.pill.append(self._ws_pill(sidebar))
 
+        # icons are rasterized at ICON_MAGNIFIED (see _ws_pill) so scaling up
+        # on hover never blurs; scale every icon DOWN to the resting size
+        # right away so an un-hovered dock still shows them at ICON, not
+        # ICON_MAGNIFIED.
     def _ws_pill(self, apps):
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         box.add_css_class("ws-pill")
         for address, cls, title in apps:
             icon_name = resolve_icon_name(cls) or cls
+            # Rasterize at ICON (native, rest size) — NOT a big texture
+            # scaled down via CSS. That was tried first (rasterize at
+            # ICON_MAGNIFIED always, `transform: scale()` down for rest) to
+            # dodge upscale blur during magnify, and it DID measure/paint
+            # correctly in isolated tests (compute_bounds confirmed 40x40),
+            # but the real dock still visibly showed oversized icons —
+            # turned out to be a render race: the layer surface's first
+            # frame renders before the dynamically-added CSS provider takes
+            # effect, so it briefly (and, per live testing, not so briefly)
+            # shows icons at their full un-scaled native size. Setting
+            # pixel_size directly has no such race — the resting raster IS
+            # ICON, correct from frame one, no provider timing involved.
             img = make_icon(icon_name, ICON)
             self._icon_seq += 1
-            img.set_name(f"dock-icon-{self._icon_seq}")  # unique CSS id, see on_dock_motion
+            img.set_name(f"dock-icon-{self._icon_seq}")  # unique id, see on_dock_motion
+            img.set_halign(Gtk.Align.CENTER)
+            img.set_valign(Gtk.Align.CENTER)
+
+            # Layout must stay pinned at ICON size even while magnified —
+            # bumping pixel_size on hover would otherwise reflow the whole
+            # button/pill to fit the bigger icon (confirmed: a first pass
+            # doing exactly that grew the pill background along with the
+            # icon). Gtk.Overlay is the fix: its own measured size comes
+            # ONLY from its main child (the size_request'd spacer below) —
+            # overlay children are excluded from that entirely and just
+            # paint at their own natural size on top, unclipped. So the
+            # image can grow to ICON_MAGNIFIED during magnify (see
+            # on_dock_motion) without the button/pill ever knowing.
+            spacer = Gtk.Box()
+            spacer.set_size_request(ICON, ICON)
+            wrap = Gtk.Overlay()
+            wrap.set_child(spacer)
+            wrap.add_overlay(img)
+
             b = Gtk.Button()
             b.add_css_class("app")
-            b.set_child(img)
+            b.set_child(wrap)
             b.set_tooltip_text(title or cls)
             b.connect("clicked", self.on_app, address)
             box.append(b)
@@ -316,17 +350,9 @@ class Dock(Gtk.Application):
     # which would shift the distance calc, which would change the growth,
     # oscillating instead of settling.
     #
-    # Scaling is done with a CSS `transform: scale()` on each icon, NOT by
-    # changing Gtk.Image's pixel_size like a first pass did — pixel_size
-    # changes the image's actual requested size, which the surrounding
-    # button/ws-pill then reflows to fit, growing the whole pill background
-    # along with the icon (confirmed with a standalone test: two otherwise
-    # identical boxes, only one with a scaled child, measured/allocated
-    # IDENTICALLY at every size — transform is purely a paint-time effect
-    # in this GTK version, 4.22, and never touches layout at all). Each
-    # icon gets a unique widget name (dock-icon-N) so a small per-frame
-    # stylesheet can target them individually — GTK4 has no simpler
-    # "set one CSS property on this specific widget instance" API.
+    # Sets Gtk.Image.pixel_size directly (see _ws_pill for why, over CSS
+    # transform) — always a genuine re-rasterize at the exact size needed,
+    # so it's crisp at every step, not just at the two endpoints.
     def on_dock_motion(self, _controller, x, _y):
         if self._base_positions is None:
             self._base_positions = []
@@ -335,31 +361,17 @@ class Dock(Gtk.Application):
                 if ok:
                     self._base_positions.append((img, bounds.get_x() + bounds.get_width() / 2))
 
-        rules = []
         for img, base_cx in self._base_positions:
             distance = abs(x - base_cx)
             t = min(distance / MAGNIFY_RADIUS, 1.0)
             falloff = (math.cos(t * math.pi) + 1) / 2  # 1 at distance=0, 0 at the radius edge
-            scale = 1 + (ICON_MAGNIFIED / ICON - 1) * falloff
-            if scale > 1.01:
-                rules.append(f"#{img.get_name()} {{ transform: scale({scale:.3f}); }}")
-        self._set_magnify_css("\n".join(rules))
+            px = ICON + (ICON_MAGNIFIED - ICON) * falloff
+            img.set_pixel_size(round(px))
 
     def on_dock_leave(self, *_):
-        self._set_magnify_css("")
+        for img in self._icons:
+            img.set_pixel_size(ICON)
         self._base_positions = None
-
-    def _set_magnify_css(self, css_text):
-        display = Gdk.Display.get_default()
-        if self._magnify_provider is not None:
-            Gtk.StyleContext.remove_provider_for_display(display, self._magnify_provider)
-            self._magnify_provider = None
-        if css_text:
-            p = Gtk.CssProvider()
-            p.load_from_string(css_text)
-            Gtk.StyleContext.add_provider_for_display(
-                display, p, Gtk.STYLE_PROVIDER_PRIORITY_USER + 10)
-            self._magnify_provider = p
 
     def on_launcher(self, *_):
         self.hide()

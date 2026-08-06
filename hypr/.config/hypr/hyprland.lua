@@ -135,8 +135,9 @@ hl.config({
 hl.layer_rule({ name = "waybar-blur", match = { namespace = "waybar" }, blur = true, ignore_alpha = 0.5 })
 hl.layer_rule({ name = "armoji-osd-blur", match = { namespace = "armoji-osd" }, blur = true, ignore_alpha = 0.5 })
 hl.layer_rule({ name = "armoji-dock-blur", match = { namespace = "armoji-dock" }, blur = true, ignore_alpha = 0.5 })
-hl.layer_rule({ name = "spotlight-search-blur", match = { namespace = "spotlight-search" }, blur = true, ignore_alpha = 0.5 })
-hl.layer_rule({ name = "spotlight-list-blur", match = { namespace = "spotlight-list" }, blur = true, ignore_alpha = 0.5 })
+-- single "spotlight" namespace now — search+list merged into one layer
+-- surface (see armoji-spotlight's header comment for why)
+hl.layer_rule({ name = "spotlight-blur", match = { namespace = "spotlight" }, blur = true, ignore_alpha = 0.5 })
 hl.layer_rule({ name = "swaync-blur", match = { namespace = "swaync-control-center" }, blur = true, ignore_alpha = 0.5 })
 
 ----------------------
@@ -408,7 +409,17 @@ hl.on("hyprland.start", function ()
   -- Low battery notifications (20/10/5%) — self-guards out on a desktop
   -- with no battery
   hl.exec_cmd("~/.local/bin/battery-watch.sh")
-  hl.exec_cmd("waybar")
+
+  -- waybar's hyprland/workspaces click-to-switch talks classic IPC dispatch
+  -- syntax directly over the socket (hardcoded in the waybar binary, no
+  -- config override exists for it) — this Hyprland build only accepts
+  -- hl.dsp.*() Lua dispatch expressions now, so clicks silently no-op
+  -- without the proxy. See hypr-ipc-proxy.py for the full story. Proxy
+  -- needs a moment to create its sockets before waybar's first IPC
+  -- connection, hence the sleep; only waybar gets the fake instance
+  -- signature — everything else keeps talking to the real socket directly.
+  hl.exec_cmd("~/.local/bin/hypr-ipc-proxy.py")
+  hl.exec_cmd("sh -c 'sleep 0.5; HYPRLAND_INSTANCE_SIGNATURE=waybar-proxy waybar'")
 
   launch_control_room()
 end)
