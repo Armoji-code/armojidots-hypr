@@ -16,6 +16,7 @@
 # system-control sub-devices, video-bus, power buttons) — pin to whichever
 # one `hyprctl devices -j` marks `main: true`, same idea as sway's
 # "first xkb_active_layout_name-bearing device" pin.
+#
 
 label() {
   case "$1" in
@@ -25,14 +26,45 @@ label() {
   esac
 }
 
+# Get main keyboard device with retry mechanism for startup race conditions.
+# A single hyprctl call per attempt is reused for both lookups below to
+# avoid doubling IPC traffic under contention. Each python parse is
+# wrapped in try/except so a malformed/empty response degrades to "no
+# device found this attempt" instead of a crash-noise traceback.
 main_keyboard() {
-  hyprctl devices -j | python3 -c '
+  tries=0
+  while [ "$tries" -lt 10 ]; do
+    devices_json=$(hyprctl devices -j)
+    if [ -n "$devices_json" ]; then
+      dev=$(echo "$devices_json" | python3 -c '
 import json, sys
-d = json.load(sys.stdin)
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
 for kb in d.get("keyboards", []):
     if kb.get("main"):
         print(kb["name"]); break
-'
+')
+      if [ -z "$dev" ]; then
+        dev=$(echo "$devices_json" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for kb in d.get("keyboards", []):
+    if "keyboard" in kb.get("name", "").lower():
+        print(kb["name"]); break
+')
+      fi
+      [ -n "$dev" ] && break
+    fi
+    tries=$((tries + 1))
+    sleep 0.3
+  done
+
+  echo "$dev"
 }
 
 case "$1" in
@@ -41,23 +73,41 @@ case "$1" in
     [ -n "$dev" ] && hyprctl switchxkblayout "$dev" next >/dev/null
     ;;
   watch|"")
+    # This is the persistent exec loop that handles live notifications
+    
     dev=$(main_keyboard)
-    [ -n "$dev" ] || exit 0
-
-    hyprctl devices -j | python3 -c "
+    
+    # If we found a device, show current layout; otherwise use fallback
+    if [ -n "$dev" ]; then
+      # Initial display
+      current_layout=$(hyprctl devices -j | python3 -c "
 import json, sys
 dev = '$dev'
 d = json.load(sys.stdin)
 for kb in d.get('keyboards', []):
     if kb.get('name') == dev:
         print(kb.get('active_keymap', '')); break
-" | while IFS= read -r name; do
-      l=$(label "$name")
-      printf '{"text":"󰌌 %s","tooltip":"%s"}\n' "$l" "$name"
+")
+      l=$(label "$current_layout")
+      printf '{"text":"󰌌 %s","tooltip":"%s"}\n' "$l" "$current_layout"
+    else
+      # Show fallback if no device found yet (but don't exit)
+      printf '{"text":"󰌌 EN","tooltip":"English"}\n'
+    fi
+
+    # Monitor for layout changes
+    SOCK="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+
+    # Same startup-race concern as main_keyboard(): don't give up on one check.
+    sock_tries=0
+    while [ ! -S "$SOCK" ] && [ "$sock_tries" -lt 10 ]; do
+      sock_tries=$((sock_tries + 1))
+      sleep 0.3
     done
 
-    SOCK="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
-    python3 -u -c "
+    # If socket exists, monitor for real-time updates
+    if [ -S "$SOCK" ]; then
+      python3 -u -c "
 import socket, sys
 target = sys.argv[1]
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -81,10 +131,14 @@ while True:
             continue
         print(layout, flush=True)
 " "$dev" "$SOCK" | while IFS= read -r name; do
-      [ -z "$name" ] && continue
-      l=$(label "$name")
-      printf '{"text":"󰌌 %s","tooltip":"%s"}\n' "$l" "$name"
-      notify-send -t 1500 -h string:x-canonical-private-synchronous:lang "󰌌 Keyboard layout" "Switched to $name"
-    done
+        [ -z "$name" ] && continue
+        l=$(label "$name")
+        printf '{"text":"󰌌 %s","tooltip":"%s"}\n' "$l" "$name"
+        notify-send -t 1500 -h string:x-canonical-private-synchronous:lang "󰌌 Keyboard layout" "Switched to $name"
+      done
+    fi
+    
+    # If we can't reach the socket (which happens during startup/race conditions) 
+    # we silently continue instead of freezing
     ;;
 esac
